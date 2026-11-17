@@ -1,260 +1,667 @@
-"""Clean, high-contrast Mini Quoridor interface. Run: python main.py."""
+
+"""600x600 Mini Quoridor - Black UI."""
+
 import os
 import sys
 import pygame
 
-from game import GameState, SIZE, apply_action, legal_pawn_moves, can_place_wall, wall_action
+from game import (
+    GameState, SIZE, apply_action,
+    legal_pawn_moves, can_place_wall, wall_action
+)
 from agents import heuristic_action, random_action
 
-WIDTH, HEIGHT = 720, 900
-CELL, GAP = 65, 13
+
+# --------------------
+# WINDOW
+# --------------------
+
+WIDTH = HEIGHT = 600
+CELL = 56
+GAP = 8
 STEP = CELL + GAP
-BOARD_SIZE = SIZE * CELL + (SIZE - 1) * GAP
-X0 = (WIDTH - BOARD_SIZE) // 2
-Y0 = 339
 
+BOARD = CELL * SIZE + GAP * (SIZE - 1)
+X0 = (WIDTH - BOARD) // 2
+Y0 = 149
+
+
+# --------------------
+# COLORS
+# --------------------
+
+BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
-BLACK = (20, 26, 23)
-GREEN = (17, 112, 77)
-GREEN_DARK = (11, 82, 56)
-GREEN_SOFT = (218, 240, 228)
-PALE = (245, 249, 246)
-LINE = (219, 229, 223)
-MUTED = (91, 106, 98)
-BLUE = (47, 117, 230)
-RED = (224, 75, 80)
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'mini_quoridor.pth')
+GREEN = (44, 210, 119)
+DIM = (173, 173, 173)
+BLUE = (53, 128, 255)
+RED = (245, 77, 85)
+
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "models",
+    "mini_quoridor.pth"
+)
 
 
-def tile_rect(r, c):
-    return pygame.Rect(X0 + c * STEP, Y0 + r * STEP, CELL, CELL)
+# --------------------
+# BUTTONS
+# --------------------
+
+BUTTONS = {
+    "move": pygame.Rect(123, 524, 110, 30),
+    "h": pygame.Rect(245, 524, 110, 30),
+    "v": pygame.Rect(367, 524, 110, 30),
+}
 
 
-def wall_rect(orientation, r, c):
-    """Draw thick, visible walls centered inside the board's tile gaps."""
-    thickness = 12
-    if orientation == 'h':
-        return pygame.Rect(X0 + c * STEP, Y0 + r * STEP + CELL + (GAP-thickness)//2,
-                           CELL * 2 + GAP, thickness)
-    return pygame.Rect(X0 + c * STEP + CELL + (GAP-thickness)//2, Y0 + r * STEP,
-                       thickness, CELL * 2 + GAP)
+# --------------------
+# BOARD GEOMETRY
+# --------------------
+
+def tile_rect(row, col):
+    return pygame.Rect(
+        X0 + col * STEP,
+        Y0 + row * STEP,
+        CELL,
+        CELL
+    )
+
+
+def wall_rect(orientation, row, col):
+
+    if orientation == "h":
+        return pygame.Rect(
+            X0 + col * STEP,
+            Y0 + row * STEP + CELL,
+            2 * CELL + GAP,
+            GAP
+        )
+
+    return pygame.Rect(
+        X0 + col * STEP + CELL,
+        Y0 + row * STEP,
+        GAP,
+        2 * CELL + GAP
+    )
 
 
 def nearest_anchor(pos):
-    x, y = pos
-    choices = []
-    for r in range(SIZE - 1):
-        for c in range(SIZE - 1):
-            center_x = X0 + c * STEP + CELL + GAP // 2
-            center_y = Y0 + r * STEP + CELL + GAP // 2
-            distance = (x - center_x) ** 2 + (y - center_y) ** 2
-            choices.append((distance, r, c))
-    distance, r, c = min(choices)
-    return (r, c) if distance <= 47 ** 2 else None
 
+    x, y = pos
+    candidates = []
+
+    for row in range(SIZE - 1):
+        for col in range(SIZE - 1):
+
+            cx = X0 + col * STEP + CELL + GAP / 2
+            cy = Y0 + row * STEP + CELL + GAP / 2
+
+            distance = (
+                (x - cx) ** 2 +
+                (y - cy) ** 2
+            )
+
+            candidates.append(
+                (distance, row, col)
+            )
+
+    distance, row, col = min(candidates)
+
+    if distance <= 43 ** 2:
+        return row, col
+
+    return None
+
+
+# --------------------
+# MAIN
+# --------------------
 
 def main():
+
     pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption('MINI QUORIDOR | You vs AI')
+
+    screen = pygame.display.set_mode(
+        (WIDTH, HEIGHT)
+    )
+
+    pygame.display.set_caption(
+        "MINI QUORIDOR"
+    )
+
     clock = pygame.time.Clock()
-    # Arial is the only family requested for every piece of UI text.
-    font = pygame.font.SysFont('arial', 20)
-    small = pygame.font.SysFont('arial', 16)
-    tiny = pygame.font.SysFont('arial', 14)
-    mid = pygame.font.SysFont('arial', 22, bold=True)
-    title = pygame.font.SysFont('arial', 34, bold=True)
+
+    # Arial font with antialiasing
+    arial = pygame.font.match_font("arial")
+
+    if not arial:
+        print("WARNING: Arial is not installed.")
+
+    def font(size, bold=False):
+        if bold:
+            return pygame.font.SysFont(
+                "arial", size, bold=True
+            )
+        return pygame.font.Font(arial, size)
+
+    title_font = font(25, True)
+    label_font = font(17, True)
+    body_font = font(15)
+    info_font = font(14)
+    tiny_font = font(13)
 
     state = GameState()
+
     wall_mode = False
-    orientation = 'h'
-    ai_kind = 'heuristic'
+    orientation = "h"
+
+    ai_kind = "heuristic"
     neural = None
-    status = 'Click a highlighted square to move.'
 
-    mode_move = pygame.Rect(175, 790, 115, 40)
-    mode_h = pygame.Rect(302, 790, 115, 40)
-    mode_v = pygame.Rect(429, 790, 115, 40)
+    status = "YOUR TURN - SELECT A MOVE OR WALL"
 
-    def draw_text(message, x, y, color=BLACK, face=None):
-        screen.blit((face or font).render(str(message), True, color), (x, y))
+    # --------------------
+    # TEXT
+    # --------------------
 
-    def draw_panel(rect, color=WHITE, border=LINE, radius=14):
-        pygame.draw.rect(screen, color, rect, border_radius=radius)
-        pygame.draw.rect(screen, border, rect, width=1, border_radius=radius)
+    def text(
+        message,
+        x,
+        y,
+        face=body_font,
+        color=WHITE,
+        center=False
+    ):
 
-    def draw_pill(rect, label, selected):
-        pygame.draw.rect(screen, GREEN if selected else WHITE, rect, border_radius=9)
-        pygame.draw.rect(screen, GREEN if selected else LINE, rect, width=1, border_radius=9)
-        rendered = small.render(label, True, WHITE if selected else BLACK)
-        screen.blit(rendered, rendered.get_rect(center=rect.center))
+        surface = face.render(
+            str(message),
+            True,
+            color
+        )
+
+        rect = surface.get_rect()
+
+        if center:
+            rect.center = (x, y)
+        else:
+            rect.topleft = (x, y)
+
+        screen.blit(surface, rect)
+
+    # --------------------
+    # RESET
+    # --------------------
 
     def reset():
+
         nonlocal state, wall_mode, status
+
         state = GameState()
         wall_mode = False
-        status = 'New game. Your turn!'
 
-    def select_neural():
+        status = "YOUR TURN - SELECT A MOVE OR WALL"
+
+    # --------------------
+    # LOAD NEURAL AI
+    # --------------------
+
+    def load_neural():
+
         nonlocal ai_kind, neural, status
+
         if not os.path.exists(MODEL_PATH):
-            status = 'No trained model. First run: python train.py'
+            status = "NO MODEL FOUND - RUN TRAIN.PY FIRST"
             return
+
         try:
             from neural_net import load_model
+
             neural = load_model(MODEL_PATH)
-            ai_kind = 'neural'
+            ai_kind = "neural"
+
             reset()
-            status = 'Neural-network AI loaded.'
+
         except Exception as exc:
-            status = f'Model loading failed: {str(exc)[:60]}'
+            status = (
+                "COULD NOT LOAD MODEL: "
+                + str(exc)[:40]
+            )
+
+    # --------------------
+    # GAME LOOP
+    # --------------------
 
     running = True
+
     while running:
+
+        # --------------------
+        # EVENTS
+        # --------------------
+
         for event in pygame.event.get():
+
             if event.type == pygame.QUIT:
                 running = False
+
             elif event.type == pygame.KEYDOWN:
+
                 if event.key == pygame.K_ESCAPE:
                     running = False
+
                 elif event.key == pygame.K_r:
                     reset()
+
                 elif event.key == pygame.K_m:
                     wall_mode = not wall_mode
+
                 elif event.key == pygame.K_h:
-                    orientation, wall_mode = 'h', True
+                    wall_mode = True
+                    orientation = "h"
+
                 elif event.key == pygame.K_v:
-                    orientation, wall_mode = 'v', True
+                    wall_mode = True
+                    orientation = "v"
+
                 elif event.key == pygame.K_1:
-                    ai_kind = 'random'
+                    ai_kind = "random"
                     reset()
+
                 elif event.key == pygame.K_2:
-                    ai_kind = 'heuristic'
+                    ai_kind = "heuristic"
                     reset()
+
                 elif event.key == pygame.K_3:
-                    select_neural()
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if mode_move.collidepoint(event.pos):
+                    load_neural()
+
+            elif (
+                event.type == pygame.MOUSEBUTTONDOWN
+                and event.button == 1
+            ):
+
+                if BUTTONS["move"].collidepoint(event.pos):
                     wall_mode = False
                     continue
-                if mode_h.collidepoint(event.pos):
-                    wall_mode, orientation = True, 'h'
-                    continue
-                if mode_v.collidepoint(event.pos):
-                    wall_mode, orientation = True, 'v'
-                    continue
-                if state.turn != 0 or state.winner is not None:
-                    continue
-                chosen = None
-                if wall_mode:
-                    anchor = nearest_anchor(event.pos)
-                    if anchor and can_place_wall(state, orientation, *anchor):
-                        chosen = wall_action(orientation, *anchor)
-                    elif anchor:
-                        status = 'Cannot place a wall here. Try another gap.'
-                else:
-                    for r, c in legal_pawn_moves(state):
-                        if tile_rect(r, c).collidepoint(event.pos):
-                            chosen = r * SIZE + c
-                            break
-                if chosen is not None:
-                    state = apply_action(state, chosen)
-                    status = 'AI is thinking...'
 
-        if state.turn == 1 and state.winner is None:
-            if ai_kind == 'random':
+                if BUTTONS["h"].collidepoint(event.pos):
+                    wall_mode = True
+                    orientation = "h"
+                    continue
+
+                if BUTTONS["v"].collidepoint(event.pos):
+                    wall_mode = True
+                    orientation = "v"
+                    continue
+
+                if (
+                    state.turn != 0
+                    or state.winner is not None
+                ):
+                    continue
+
+                action = None
+
+                if wall_mode:
+
+                    anchor = nearest_anchor(event.pos)
+
+                    if anchor is not None:
+
+                        if can_place_wall(
+                            state,
+                            orientation,
+                            *anchor
+                        ):
+                            action = wall_action(
+                                orientation,
+                                *anchor
+                            )
+
+                        else:
+                            status = "INVALID WALL POSITION"
+
+                else:
+
+                    for row, col in legal_pawn_moves(state):
+
+                        if tile_rect(
+                            row, col
+                        ).collidepoint(event.pos):
+
+                            action = row * SIZE + col
+                            break
+
+                if action is not None:
+                    state = apply_action(state, action)
+
+        # --------------------
+        # AI TURN
+        # --------------------
+
+        if (
+            state.turn == 1
+            and state.winner is None
+        ):
+
+            if ai_kind == "random":
                 action = random_action(state)
-            elif ai_kind == 'neural' and neural is not None:
+
+            elif (
+                ai_kind == "neural"
+                and neural is not None
+            ):
+
                 from neural_net import choose_neural_action
-                action = choose_neural_action(neural, state)
+
+                action = choose_neural_action(
+                    neural,
+                    state
+                )
+
             else:
                 action = heuristic_action(state)
+
             state = apply_action(state, action)
-            status = 'Your turn. Move or place a wall.'
 
-        screen.fill(WHITE)
-        # All gameplay instructions at the TOP.
-        draw_text('MINI QUORIDOR', 44, 24, BLACK, title)
-        draw_text('HOW TO PLAY', 44, 81, GREEN_DARK, small)
-        draw_text('Reach the opposite edge first. Click a highlighted tile to move.', 44, 106, BLACK, small)
-        draw_text('Place walls across two spaces to block paths. Never block all routes.', 44, 130, BLACK, small)
-        draw_text('Controls: M = mode  |  H/V = wall direction  |  R = restart', 44, 154, MUTED, small)
-        draw_text('AI difficulty: 1 = random  |  2 = heuristic  |  3 = neural network', 44, 176, MUTED, small)
-        pygame.draw.line(screen, LINE, (44, 209), (676, 209), 1)
+            status = "YOUR TURN - SELECT A MOVE OR WALL"
 
-        # AI information is located ABOVE the board.
-        ai_panel = pygame.Rect(154, 222, 412, 90)
-        draw_panel(ai_panel, PALE)
-        pygame.draw.circle(screen, RED, (187, 265), 15)
-        pygame.draw.circle(screen, WHITE, (187, 265), 15, 2)
-        draw_text('AI  /  RED', 215, 238, BLACK, mid)
-        draw_text(f'{ai_kind.upper()}  |  Walls left: {state.remaining[1]}', 215, 270, MUTED, small)
+        # --------------------
+        # BACKGROUND
+        # --------------------
 
-        # Board has NO brown background or wooden checkerboard.
-        frame = pygame.Rect(X0-16, Y0-16, BOARD_SIZE+32, BOARD_SIZE+32)
-        draw_panel(frame, WHITE, LINE, 14)
-        for r in range(SIZE):
-            for c in range(SIZE):
-                pygame.draw.rect(screen, GREEN_SOFT, tile_rect(r, c), border_radius=7)
-                pygame.draw.rect(screen, LINE, tile_rect(r, c), 1, border_radius=7)
+        screen.fill(BLACK)
 
-        if state.turn == 0 and state.winner is None and not wall_mode:
-            for r, c in legal_pawn_moves(state):
-                center = tile_rect(r, c).center
-                pygame.draw.circle(screen, GREEN, center, 10)
+        # --------------------
+        # GAME INSTRUCTIONS
+        # --------------------
 
-        # Very visible solid green walls drawn ON TOP of tiles.
-        for o, r, c in sorted(state.walls):
-            rect = wall_rect(o, r, c)
-            pygame.draw.rect(screen, GREEN_DARK, rect, border_radius=5)
-            pygame.draw.rect(screen, GREEN, rect.inflate(-3, -3), border_radius=4)
+        text(
+            "MINI QUORIDOR",
+            WIDTH // 2,
+            22,
+            title_font,
+            WHITE,
+            True
+        )
 
-        if wall_mode and state.turn == 0 and state.winner is None:
-            anchor = nearest_anchor(pygame.mouse.get_pos())
-            if anchor:
-                r, c = anchor
-                rect = wall_rect(orientation, r, c)
-                ok = can_place_wall(state, orientation, r, c)
-                color = GREEN if ok else RED
-                ghost = pygame.Surface(rect.size, pygame.SRCALPHA)
-                pygame.draw.rect(ghost, (*color, 170), ghost.get_rect(), border_radius=5)
-                screen.blit(ghost, rect.topleft)
+        text(
+            "Reach the opposite edge first. Click a green dot to move.",
+            WIDTH // 2,
+            49,
+            info_font,
+            WHITE,
+            True
+        )
 
-        for player, color in ((0, BLUE), (1, RED)):
-            center = tile_rect(*state.pawns[player]).center
-            pygame.draw.circle(screen, WHITE, center, 24)
-            pygame.draw.circle(screen, color, center, 21)
-            pygame.draw.circle(screen, WHITE, center, 21, 3)
+        text(
+            "Walls block paths, but cannot seal off every route.",
+            WIDTH // 2,
+            67,
+            info_font,
+            WHITE,
+            True
+        )
 
-        # Player information is BELOW the board.
-        player_panel = pygame.Rect(154, 734, 412, 86)
-        draw_panel(player_panel, PALE)
-        pygame.draw.circle(screen, BLUE, (187, 774), 15)
-        pygame.draw.circle(screen, WHITE, (187, 774), 15, 2)
-        draw_text('YOU  /  BLUE', 215, 748, BLACK, mid)
-        draw_text(f'Walls left: {state.remaining[0]}', 215, 779, MUTED, small)
+        text(
+            "M: move/wall   H/V: wall direction   R: reset   1/2/3: AI level",
+            WIDTH // 2,
+            85,
+            tiny_font,
+            DIM,
+            True
+        )
 
-        # Buttons sit under player details to keep the board unobstructed.
-        # Button positions are placed below the player information panel.
-        mode_move.y = mode_h.y = mode_v.y = 831
-        draw_pill(mode_move, 'MOVE', not wall_mode)
-        draw_pill(mode_h, 'WALL  H', wall_mode and orientation == 'h')
-        draw_pill(mode_v, 'WALL  V', wall_mode and orientation == 'v')
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (38, 105),
+            (562, 105),
+            1
+        )
+
+        # --------------------
+        # AI INFORMATION
+        # --------------------
+
+        pygame.draw.circle(
+            screen,
+            RED,
+            (167, 126),
+            9
+        )
+
+        text(
+            "AI",
+            184,
+            116,
+            label_font
+        )
+
+        text(
+            f"{ai_kind.upper()}  |  WALLS: {state.remaining[1]}",
+            229,
+            119,
+            info_font
+        )
+
+        # --------------------
+        # BOARD
+        # --------------------
+
+        for row in range(SIZE):
+            for col in range(SIZE):
+
+                pygame.draw.rect(
+                    screen,
+                    WHITE,
+                    tile_rect(row, col),
+                    1,
+                    border_radius=5
+                )
+
+        # --------------------
+        # VALID MOVES
+        # --------------------
+
+        if (
+            state.turn == 0
+            and state.winner is None
+            and not wall_mode
+        ):
+
+            for row, col in legal_pawn_moves(state):
+
+                pygame.draw.circle(
+                    screen,
+                    GREEN,
+                    tile_rect(row, col).center,
+                    6
+                )
+
+        # --------------------
+        # PLACED WALLS
+        # --------------------
+
+        for orient, row, col in sorted(state.walls):
+
+            pygame.draw.rect(
+                screen,
+                GREEN,
+                wall_rect(orient, row, col)
+            )
+
+        # --------------------
+        # WALL PREVIEW
+        # --------------------
+
+        if (
+            wall_mode
+            and state.turn == 0
+            and state.winner is None
+        ):
+
+            anchor = nearest_anchor(
+                pygame.mouse.get_pos()
+            )
+
+            if anchor is not None:
+
+                row, col = anchor
+
+                preview = wall_rect(
+                    orientation,
+                    row,
+                    col
+                )
+
+                valid = can_place_wall(
+                    state,
+                    orientation,
+                    row,
+                    col
+                )
+
+                preview_surface = pygame.Surface(
+                    preview.size,
+                    pygame.SRCALPHA
+                )
+
+                preview_surface.fill(
+                    (*GREEN, 150)
+                    if valid
+                    else (*RED, 135)
+                )
+
+                screen.blit(
+                    preview_surface,
+                    preview.topleft
+                )
+
+        # --------------------
+        # PLAYER PIECES
+        # --------------------
+
+        for player, color in (
+            (0, BLUE),
+            (1, RED)
+        ):
+
+            center = tile_rect(
+                *state.pawns[player]
+            ).center
+
+            pygame.draw.circle(
+                screen,
+                color,
+                center,
+                18
+            )
+
+            pygame.draw.circle(
+                screen,
+                WHITE,
+                center,
+                18,
+                2
+            )
+
+        # --------------------
+        # PLAYER INFORMATION
+        # --------------------
+
+        pygame.draw.circle(
+            screen,
+            BLUE,
+            (168, 485),
+            9
+        )
+
+        text(
+            "YOU",
+            185,
+            475,
+            label_font
+        )
+
+        text(
+            f"WALLS: {state.remaining[0]}",
+            245,
+            478,
+            info_font
+        )
+
+        # --------------------
+        # CONTROL BUTTONS
+        # --------------------
+
+        for name, rect in BUTTONS.items():
+
+            active = (
+                (name == "move" and not wall_mode)
+                or
+                (name == orientation and wall_mode)
+            )
+
+            pygame.draw.rect(
+                screen,
+                GREEN if active else WHITE,
+                rect,
+                2 if active else 1
+            )
+
+            label = {
+                "move": "MOVE",
+                "h": "WALL H",
+                "v": "WALL V"
+            }[name]
+
+            text(
+                label,
+                rect.centerx,
+                rect.centery,
+                info_font,
+                GREEN if active else WHITE,
+                True
+            )
+
+        # --------------------
+        # STATUS
+        # --------------------
+
+        pygame.draw.line(
+            screen,
+            WHITE,
+            (38, 565),
+            (562, 565),
+            1
+        )
 
         if state.winner is not None:
-            message = 'YOU WIN!' if state.winner == 0 else 'AI WINS!'
-            message_color = GREEN_DARK if state.winner == 0 else RED
+
+            if state.winner == 0:
+                message = "YOU WIN! PRESS R TO RESTART"
+            else:
+                message = "AI WINS! PRESS R TO RESTART"
+
         else:
             message = status
-            message_color = GREEN_DARK
-        rendered = tiny.render(message, True, message_color)
-        screen.blit(rendered, rendered.get_rect(center=(WIDTH//2, 884)))
+
+        text(
+            message,
+            WIDTH // 2,
+            581,
+            tiny_font,
+            GREEN,
+            True
+        )
 
         pygame.display.flip()
         clock.tick(60)
+
     pygame.quit()
     sys.exit(0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
