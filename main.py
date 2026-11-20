@@ -155,6 +155,7 @@ def main():
     state = GameState()
     recorder = HumanGameRecorder()
     DATA_TARGET = 30
+    saved_this_game = False
 
     wall_mode = False
     orientation = "h"
@@ -198,9 +199,10 @@ def main():
 
     def reset():
 
-        nonlocal state, wall_mode, status
+        nonlocal state, wall_mode, status, saved_this_game
 
         recorder.discard()  # R/AI switch discards unfinished games
+        saved_this_game = False
         state = GameState()
         wall_mode = False
 
@@ -375,7 +377,8 @@ def main():
         # Save each completed human-vs-heuristic game exactly once.
         # Unfinished games, random games, and neural games are excluded.
         if state.winner is not None and ai_kind == "heuristic":
-            recorder.finish(state)
+            if recorder.finish(state):
+                saved_this_game = True
 
         # --------------------
         # BACKGROUND
@@ -651,7 +654,7 @@ def main():
         if state.winner is not None:
 
             if state.winner == 0:
-                message = "YOU WIN! GAME SAVED - PRESS R" if ai_kind == "heuristic" and completed_count() <= DATA_TARGET else "YOU WIN! PRESS R TO RESTART"
+                message = "YOU WIN! GAME SAVED - PRESS R" if saved_this_game else "YOU WIN! PRESS R TO RESTART"
             else:
                 message = "AI WINS! GAME SAVED - PRESS R" if ai_kind == "heuristic" and completed_count() <= DATA_TARGET else "AI WINS! PRESS R TO RESTART"
 
