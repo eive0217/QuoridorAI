@@ -10,6 +10,7 @@ from game import (
     legal_pawn_moves, can_place_wall, wall_action
 )
 from agents import heuristic_action, random_action
+from data_collection import HumanGameRecorder, completed_count
 
 
 # --------------------
@@ -152,6 +153,8 @@ def main():
     tiny_font = font(13)
 
     state = GameState()
+    recorder = HumanGameRecorder()
+    DATA_TARGET = 30
 
     wall_mode = False
     orientation = "h"
@@ -197,6 +200,7 @@ def main():
 
         nonlocal state, wall_mode, status
 
+        recorder.discard()  # R/AI switch discards unfinished games
         state = GameState()
         wall_mode = False
 
@@ -333,6 +337,8 @@ def main():
                             break
 
                 if action is not None:
+                    if ai_kind == "heuristic" and completed_count() < DATA_TARGET:
+                        recorder.record(state, action)  # BEFORE the state changes
                     state = apply_action(state, action)
 
         # --------------------
@@ -365,6 +371,11 @@ def main():
             state = apply_action(state, action)
 
             status = "YOUR TURN - SELECT A MOVE OR WALL"
+
+        # Save each completed human-vs-heuristic game exactly once.
+        # Unfinished games, random games, and neural games are excluded.
+        if state.winner is not None and ai_kind == "heuristic":
+            recorder.finish(state)
 
         # --------------------
         # BACKGROUND
@@ -439,7 +450,7 @@ def main():
         )
 
         text(
-            f"{ai_kind.upper()}  |  WALLS: {state.remaining[1]}",
+            f"{ai_kind.upper()}  |  WALLS: {state.remaining[1]}  |  DATA: {min(completed_count(), DATA_TARGET)}/{DATA_TARGET}",
             229,
             119,
             info_font
@@ -640,9 +651,9 @@ def main():
         if state.winner is not None:
 
             if state.winner == 0:
-                message = "YOU WIN! PRESS R TO RESTART"
+                message = "YOU WIN! GAME SAVED - PRESS R" if ai_kind == "heuristic" and completed_count() <= DATA_TARGET else "YOU WIN! PRESS R TO RESTART"
             else:
-                message = "AI WINS! PRESS R TO RESTART"
+                message = "AI WINS! GAME SAVED - PRESS R" if ai_kind == "heuristic" and completed_count() <= DATA_TARGET else "AI WINS! PRESS R TO RESTART"
 
         else:
             message = status
