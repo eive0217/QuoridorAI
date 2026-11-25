@@ -1,6 +1,3 @@
-
-"""600x600 Mini Quoridor - Black UI."""
-
 import os
 import sys
 import pygame
